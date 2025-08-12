@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - dbbackup.local.com
+  resources:
+  - mysqlbackups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - dbbackup.local.com
+  resources:
+  - mysqlbackups/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - dbbackup.local.com
+  resources:
+  - mysqlbackups/status
+  verbs:
+  - get
+  - patch
+  - update

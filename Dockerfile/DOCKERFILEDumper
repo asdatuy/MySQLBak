@@ -1,0 +1,6 @@
+FROM oraclelinux:9
+
+RUN yum makecache && yum install mysql rsync tar -y && mkdir /sqlCredential /bakDir
+WORKDIR /sqlCredential
+COPY ./entrypointDumper.sh /entrypoint
+ENTRYPOINT ["sh","-c","/entrypoint"]

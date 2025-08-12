@@ -1,0 +1,12 @@
+apiVersion: dbbackup.local.com/v1alpha1
+kind: MySQLBackup
+metadata:
+  labels:
+    app.kubernetes.io/name: mysqlbackup
+    app.kubernetes.io/managed-by: kustomize
+  name: mysqlbackup2
+  namespace: default
+spec:
+  host: mysqltest
+  secretName: s1
+  dbName: testDB
