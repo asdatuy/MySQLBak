@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mysqlcontroller
+rules:
+- apiGroups: ["batch",""]
+  resources: ["jobs","secrets"]
+  verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mysqlcontrollerbiding
+subjects:
+- kind: ServiceAccount
+  name: mysqlbackup-controller-manager
+  namespace: mysqlbackup-system
+roleRef:
+  kind: ClusterRole
+  name: mysqlcontroller
+  apiGroup: rbac.authorization.k8s.io

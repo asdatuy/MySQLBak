@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: metricreader
+  name: metricreader
+spec:
+  serviceAccount: default
+  containers:
+  - image: nicolaka/netshoot
+    imagePullPolicy: IfNotPresent
+    name: metricreader
+    args:
+    - sh
+    - -c
+    - tail -f /dev/null
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}

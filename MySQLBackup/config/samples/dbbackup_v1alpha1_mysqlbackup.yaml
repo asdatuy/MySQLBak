@@ -7,6 +7,11 @@ metadata:
   name: mysqlbackup2
   namespace: default
 spec:
-  host: mysqltest
-  secretName: s1
-  dbName: testDB
+  host: "mysqltest"
+  dbAuth: "sqlsecret"
+  dbName: "mysql"
+  bakMode: "s3"
+  s3Bak:
+    endpoint: "http://192.168.100.110:9000"
+    bucket: "sqldumerfile"
+    s3Auth: "s3secret"

@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  creationTimestamp: null
+  name: c1
+spec:
+  jobTemplate:
+    metadata:
+      creationTimestamp: null
+      name: c1
+    spec:
+      template:
+        metadata:
+          creationTimestamp: null
+        spec:
+          containers:
+          - image: busybox
+            imagePullPolicy: IfNotPresent
+            name: c1
+            resources: {}
+            args:
+            - sh
+            - -c
+            - "echo done!!"
+          restartPolicy: OnFailure
+  schedule: '* * * * *'
+status: {}

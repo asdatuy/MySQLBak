@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -14,10 +15,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	metrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 type MySQLBackupReconciler struct {
@@ -28,7 +29,32 @@ type MySQLBackupReconciler struct {
 var (
 	jobOwnerKey = ".metadata.controller"
 	apiGVStr    = dbbackupv1alpha1.GroupVersion.String()
+	// Promethus metrics
+	PbakTotalJob = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "bakJobTotal",
+			Help: "Number of total jobs",
+		},
+	)
+
+	PsucceedJobs = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "succeedJobs",
+			Help: "Number of succeed jobs",
+		},
+	)
+
+	PfailedJobs = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "bakJobfiled",
+			Help: "Number of failed jobs",
+		},
+	)
 )
+
+func init() {
+	metrics.Registry.MustRegister(PbakTotalJob, PsucceedJobs, PfailedJobs)
+}
 
 // +kubebuilder:rbac:groups=dbbackup.local.com,resources=mysqlbackups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=dbbackup.local.com,resources=mysqlbackups/status,verbs=get;update;patch
@@ -120,6 +146,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			Message:            "Job is running!!! ",
 			LastTransitionTime: metav1.NewTime(time.Now()),
 		})
+		PbakTotalJob.Inc()
 	} else if len(failedJob) > 0 {
 		meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 			Type:               "Available",
@@ -128,6 +155,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			Message:            "Have pods of job %v status is failed",
 			LastTransitionTime: metav1.NewTime(time.Now()),
 		})
+		PfailedJobs.Inc()
 	} else if len(completedJob) > 0 {
 		meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 			Type:               "Available",
@@ -136,6 +164,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			Message:            "All pods of job is completed",
 			LastTransitionTime: metav1.NewTime(time.Now()),
 		})
+		PsucceedJobs.Inc()
 	}
 
 	if len(JobList.Items) == 0 || instance.Spec.ManualTrigger == true {
@@ -147,35 +176,14 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			}
 		}
 
-		// 查看集群中是否存在需要的资源(svc,secret)
-		// svcFound := &corev1.Service{}
-		// err := r.Get(ctx, types.NamespacedName{Name: instance.Spec.Host, Namespace: instance.Namespace}, svcFound)
-		// if err != nil || apierrors.IsNotFound(err) {
-		// 	logger.Error(err, "Failed to get svc", "Service", instance.Spec.Host)
-		// 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-		// 		Type:               "error",
-		// 		Status:             metav1.ConditionFalse,
-		// 		Reason:             "HostNotFound",
-		// 		Message:            fmt.Sprintf("Not found svc %v in this NS", instance.Spec.Host),
-		// 		LastTransitionTime: metav1.NewTime(time.Now()),
-		// 	})
-		// 	if err := r.Status().Update(ctx, instance); err != nil {
-		// 		logger.Error(err, "Failed update status")
-		// 		return ctrl.Result{}, err
-		// 	}
-		// 	return ctrl.Result{}, err
-		// }
-		// logger.Info("Failed to get svc!!!", "Host", instance.Spec.Host)
-
-		// 获取Credentails
-		sctFound := &corev1.Secret{}
-		err = r.Get(ctx, types.NamespacedName{Name: instance.Spec.DBAuth, Namespace: instance.Namespace}, sctFound)
-		if err != nil || apierrors.IsNotFound(err) {
-			logger.Error(err, "Failed to get Secret", "Secret", instance.Spec.DBAuth)
+		// 检查DBAuth是否存在
+		dbAuthExist := r.CheckSecret(instance, ctx, instance.Spec.DBAuth)
+		if !dbAuthExist {
+			logger.Error(err, "Failed to get DBAuth", "Secret", instance.Spec.DBAuth)
 			meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 				Type:               "error",
 				Status:             metav1.ConditionFalse,
-				Reason:             "CredentailsNotFound",
+				Reason:             "DBCredentailsNotFound",
 				Message:            fmt.Sprintf("Secret %v Not Found", instance.Spec.DBAuth),
 				LastTransitionTime: metav1.NewTime(time.Now()),
 			})
@@ -185,7 +193,26 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			}
 			return ctrl.Result{}, err
 		}
-		logger.Info("Found Secret!!!", "Secret", instance.Spec.DBAuth)
+		logger.Info("Found DBAuth!!!", "Secret", instance.Spec.DBAuth)
+
+		// 检查S3Auth是否存在
+		s3AuthExist := r.CheckSecret(instance, ctx, instance.Spec.S3Bak.S3Auth)
+		if !s3AuthExist {
+			logger.Error(err, "Failed to get s3Auth", "Secret", instance.Spec.S3Bak.S3Auth)
+			meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+				Type:               "error",
+				Status:             metav1.ConditionFalse,
+				Reason:             "s3CredentailsNotFound",
+				Message:            fmt.Sprintf("Secret %v Not Found", instance.Spec.S3Bak.S3Auth),
+				LastTransitionTime: metav1.NewTime(time.Now()),
+			})
+			if err := r.Status().Update(ctx, instance); err != nil {
+				logger.Error(err, "Failed update status")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, err
+		}
+		logger.Info("Found S3Auth!!!", "Secret", instance.Spec.S3Bak.S3Auth)
 
 		// 构建Job清单
 		tempJobName := instance.Name + "-" + strconv.Itoa(len(JobList.Items)+1)
@@ -231,6 +258,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			Message:            "Job Created",
 			LastTransitionTime: metav1.NewTime(time.Now()),
 		})
+		PbakTotalJob.Inc()
 	}
 
 	// final update status
@@ -241,103 +269,20 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{}, nil
 }
 
-func (r *MySQLBackupReconciler) BuildJobSruct(job *dbbackupv1alpha1.MySQLBackup, jobName string) (*batchv1.Job, error) {
-	jobTemp := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      jobName,
-			Namespace: job.Namespace,
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: ptr.To(int32(6)),
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"dbbackupv1alpha1/MySQLBackup": "backjob"},
-			},
-			ManualSelector: ptr.To(true),
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"dbbackupv1alpha1/MySQLBackup": "backjob"},
-				},
-				Spec: corev1.PodSpec{
-					Volumes: []corev1.Volume{
-						{
-							Name: "credentails",
-							VolumeSource: corev1.VolumeSource{
-								Secret: &corev1.SecretVolumeSource{
-									SecretName: job.Spec.DBAuth,
-								},
-							},
-						},
-						{
-							Name: "mysqldesc",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{
-									Medium: corev1.StorageMediumDefault,
-								},
-							},
-						},
-					},
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						{
-							Name:            "mysqldumper",
-							Image:           "swr.cn-north-4.myhuaweicloud.com/shanwen_img/sqldump:v2",
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							VolumeMounts: []corev1.VolumeMount{
-								corev1.VolumeMount{
-									Name:      "credentails",
-									ReadOnly:  true,
-									MountPath: "/sqlCredential",
-								},
-								corev1.VolumeMount{
-									Name:      "mysqldesc",
-									MountPath: "/mysqldesc",
-								},
-							},
-						},
-					},
-					InitContainers: []corev1.Container{
-						corev1.Container{
-							Name:            "detector",
-							Image:           "swr.cn-north-4.myhuaweicloud.com/shanwen_img/detector:v1",
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							VolumeMounts: []corev1.VolumeMount{
-								corev1.VolumeMount{
-									Name:      "mysqldesc",
-									MountPath: "/mysqldesc",
-								},
-							},
-							Env: []corev1.EnvVar{
-								corev1.EnvVar{
-									Name:  "rHost",
-									Value: job.Spec.Host,
-								},
-								corev1.EnvVar{
-									Name:  "rPort",
-									Value: job.Spec.Port,
-								},
-								corev1.EnvVar{
-									Name:  "rDBName",
-									Value: job.Spec.DBName,
-								},
-							},
-						},
-					},
-				},
-			},
-		},
+func (r *MySQLBackupReconciler) CheckSecret(instance *dbbackupv1alpha1.MySQLBackup, ctx context.Context, SecretName string) bool {
+	err := r.Get(ctx, types.NamespacedName{Name: SecretName, Namespace: instance.Namespace}, &corev1.Secret{})
+	if err != nil || apierrors.IsNotFound(err) {
+		return false
 	}
-
-	if error := ctrl.SetControllerReference(job, jobTemp, r.Scheme); error != nil {
-		return nil, error
-	}
-	return jobTemp, nil
+	return true
 }
 
 func (r *MySQLBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// 创建索引器
+	//创建索引器
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &batchv1.Job{}, jobOwnerKey, func(rawObj client.Object) []string {
-		// 查询Job对应的主人
+		// 获取所有Job
 		job := rawObj.(*batchv1.Job)
+		// 获取Job对应的主人
 		owner := metav1.GetControllerOf(job)
 		if owner == nil {
 			return nil

@@ -13,7 +13,9 @@ type StorageMode string
 
 type S3BakMode struct {
 	// +required
-	Path string `json:"path"`
+	Endpoint string `json:"endpoint"`
+	// +required
+	Bucket string `json:"bucket"`
 	// +required
 	S3Auth string `json:"s3Auth"`
 }
@@ -31,7 +33,7 @@ type MySQLBackupSpec struct {
 	// +required
 	Host string `json:"host"`
 	// +required
-	DBAuth string `json:"secretName"`
+	DBAuth string `json:"dbAuth"`
 	// +required
 	// +default="3306"
 	Port string `json:"port"`

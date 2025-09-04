@@ -44,21 +44,53 @@ spec:
             type: object
           spec:
             properties:
+              bakMode:
+                default: pv
+                type: string
+              dbAuth:
+                type: string
               dbName:
                 type: string
               host:
                 type: string
               manualTrigger:
+                default: false
                 type: boolean
               port:
                 default: "3306"
                 type: string
-              secretName:
-                type: string
+              pvBak:
+                properties:
+                  path:
+                    type: string
+                  pvName:
+                    type: string
+                  scName:
+                    type: string
+                required:
+                - path
+                - pvName
+                type: object
+              s3Bak:
+                properties:
+                  bucket:
+                    type: string
+                  endpoint:
+                    type: string
+                  s3Auth:
+                    type: string
+                required:
+                - bucket
+                - endpoint
+                - s3Auth
+                type: object
             required:
+            - bakMode
+            - dbAuth
             - dbName
             - host
-            - secretName
+            - manualTrigger
+            - port
             type: object
           status:
             properties:
