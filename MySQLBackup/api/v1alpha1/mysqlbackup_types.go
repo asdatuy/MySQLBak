@@ -57,14 +57,22 @@ type MySQLBackupStatus struct {
 	// +patchStrategy=merge
 	// +patchMergeKey=type
 	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+	Conditions    []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+	LastBakStatus string             `json:"lastBakStatus,omitempty"`
+	LastReason    string             `json:"lastReason,omitempty"`
+	// +optional
+	LatestCreateTime *metav1.Time `json:"lastCreateTime,omitempty"`
+	// +optional
+	LatestSucceedTime *metav1.Time `json:"lastSucceedTime,omitempty"`
+	// +optional
+	LatestFailedTime *metav1.Time `json:"lastFailedTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.conditions[-1].status`
-// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.conditions[-1].reason`
-
+// +kubebuilder:printcolumn:name="LastStatus",type=string,JSONPath=`.status.lastBakStatus`
+// +kubebuilder:printcolumn:name="LastReason",type=string,JSONPath=`.status.lastReason`
+// +kubebuilder:printcolumn:name="LastSucceed",type=string,JSONPath=`.status.lastSucceedTime`
 type MySQLBackup struct {
 	metav1.TypeMeta `json:",inline"`
 

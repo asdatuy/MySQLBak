@@ -6,7 +6,7 @@ s3Storage(){
     sc=$(cat /s3Auth/* | grep sc | awk -F " " '{print $2}')
 
     mcli alias set myminio/ ${S3Endpoint} ${ac} ${sc}
-    mysqldump -u${user} -p${passwd} -h${rHost} -P${rPort} ${rDBName} | zstd -c | mcli pipe myminio/${S3Bucket}/${rDBName}_$(date +'%y_%m_%d-%H:%M:%S').zst
+    mysqldump -u${user} -p${passwd} -h${rHost} -P${rPort} ${rDBName} | zstd -c | mcli pipe myminio/${S3Bucket}/${rDBName}.zst
     if [[ $? != 0 ]]
     then
         echo "Backup db failed"

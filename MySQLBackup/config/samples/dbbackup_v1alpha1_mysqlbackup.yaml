@@ -4,7 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: mysqlbackup
     app.kubernetes.io/managed-by: kustomize
-  name: mysqlbackup2
+  name: mysqlbackup
   namespace: default
 spec:
   host: "mysqltest"

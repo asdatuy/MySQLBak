@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: swr.cn-north-4.myhuaweicloud.com/shanwen_img/mysqlcontroller
-  newTag: v2
+  newTag: v4

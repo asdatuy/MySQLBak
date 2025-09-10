@@ -15,11 +15,14 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.conditions[-1].status
-      name: Status
+    - jsonPath: .status.lastBakStatus
+      name: LastStatus
       type: string
-    - jsonPath: .status.conditions[-1].reason
-      name: Reason
+    - jsonPath: .status.lastReason
+      name: LastReason
+      type: string
+    - jsonPath: .status.lastSucceedTime
+      name: LastSucceed
       type: string
     name: v1alpha1
     schema:
@@ -153,6 +156,19 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastBakStatus:
+                type: string
+              lastCreateTime:
+                format: date-time
+                type: string
+              lastFailedTime:
+                format: date-time
+                type: string
+              lastReason:
+                type: string
+              lastSucceedTime:
+                format: date-time
+                type: string
             type: object
         required:
         - spec

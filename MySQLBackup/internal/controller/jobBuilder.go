@@ -1,12 +1,15 @@
 package controller
 
 import (
+	"context"
 	"local/MySQLBackup/api/v1alpha1"
 	dbbackupv1alpha1 "local/MySQLBackup/api/v1alpha1"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -18,7 +21,7 @@ func (r *MySQLBackupReconciler) BuildJobSruct(job *dbbackupv1alpha1.MySQLBackup,
 			Namespace: job.Namespace,
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit: ptr.To(int32(6)),
+			BackoffLimit: ptr.To(int32(2)),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"dbbackupv1alpha1/MySQLBackup": "backjob"},
 			},
@@ -42,19 +45,13 @@ func (r *MySQLBackupReconciler) BuildJobSruct(job *dbbackupv1alpha1.MySQLBackup,
 					Containers: []corev1.Container{
 						{
 							Name:            "mysqldumper",
-							Image:           "swr.cn-north-4.myhuaweicloud.com/shanwen_img/sqldump:v3",
+							Image:           "swr.cn-north-4.myhuaweicloud.com/shanwen_img/sqldumper:v1",
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "mysqlauth",
 									ReadOnly:  true,
 									MountPath: "/sqlCredential",
-								},
-							},
-							Env: []corev1.EnvVar{
-								{
-									Name:  "init",
-									Value: "done",
 								},
 							},
 						},
@@ -62,19 +59,13 @@ func (r *MySQLBackupReconciler) BuildJobSruct(job *dbbackupv1alpha1.MySQLBackup,
 					InitContainers: []corev1.Container{
 						{
 							Name:            "detector",
-							Image:           "swr.cn-north-4.myhuaweicloud.com/shanwen_img/detector:v2",
+							Image:           "swr.cn-north-4.myhuaweicloud.com/shanwen_img/detector:v1",
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "mysqlauth",
 									ReadOnly:  true,
 									MountPath: "/sqlCredential",
-								},
-							},
-							Env: []corev1.EnvVar{
-								{
-									Name:  "init",
-									Value: "done",
 								},
 							},
 						},
@@ -163,4 +154,12 @@ func (r *MySQLBackupReconciler) BuildJobSruct(job *dbbackupv1alpha1.MySQLBackup,
 		return nil, error
 	}
 	return jobTemp, nil
+}
+
+func (r *MySQLBackupReconciler) CheckSecret(instance *dbbackupv1alpha1.MySQLBackup, ctx context.Context, SecretName string) bool {
+	err := r.Get(ctx, types.NamespacedName{Name: SecretName, Namespace: instance.Namespace}, &corev1.Secret{})
+	if err != nil || apierrors.IsNotFound(err) {
+		return false
+	}
+	return true
 }
