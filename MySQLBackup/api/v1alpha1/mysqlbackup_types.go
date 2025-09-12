@@ -57,9 +57,11 @@ type MySQLBackupStatus struct {
 	// +patchStrategy=merge
 	// +patchMergeKey=type
 	// +optional
-	Conditions    []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
-	LastBakStatus string             `json:"lastBakStatus,omitempty"`
-	LastReason    string             `json:"lastReason,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+	// +optional
+	LastBakStatus string `json:"lastBakStatus,omitempty"`
+	// +optional
+	LastReason string `json:"lastReason,omitempty"`
 	// +optional
 	LatestCreateTime *metav1.Time `json:"lastCreateTime,omitempty"`
 	// +optional

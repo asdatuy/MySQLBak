@@ -1,0 +1,9 @@
+apiVersion: dbrestore.local.com/v1alpha1
+kind: MySQLRestore
+metadata:
+  labels:
+    app.kubernetes.io/name: mysqlrestore
+    app.kubernetes.io/managed-by: kustomize
+  name: mysqlrestore-sample
+spec:
+  # TODO(user): Add fields here

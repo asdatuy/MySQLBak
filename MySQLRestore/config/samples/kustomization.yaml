@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- dbrestore_v1alpha1_mysqlrestore.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

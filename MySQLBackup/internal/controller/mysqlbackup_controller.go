@@ -284,7 +284,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 					crStatusRep.LatestFailedTime = &v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime
 					// tmpFailedWaterMark = v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime
 					logger.Info("New Failed Jobs and Prometheus+1", "jobName", v.Name, "JobFailedTime", v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime)
-					//logger.Info("failedMasterMark", "time", failedWaterMark)
+					// logger.Info("failedMasterMark", "time", failedWaterMark)
 					// 设置临时cr
 					meta.SetStatusCondition(&crStatusRep.Conditions, metav1.Condition{
 						Type:               "Available",
