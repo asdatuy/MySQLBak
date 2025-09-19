@@ -200,7 +200,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	// 对JobList进行CreateTime的排序 required by prometheus count
+	// 对JobList进行CreateTime的排序
 	sort.Slice(JobList.Items, func(i int, j int) bool {
 		return JobList.Items[i].CreationTimestamp.Before(&JobList.Items[j].CreationTimestamp)
 	})
@@ -222,9 +222,9 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		failedWaterMark = &metav1.Time{}
 	}
 
-	var activeJob []*batchv1.Job
-	var failedJob []*batchv1.Job
-	var completedJob []*batchv1.Job
+	// var activeJob []*batchv1.Job
+	// var failedJob []*batchv1.Job
+	// var completedJob []*batchv1.Job
 	// tmpActiveWaterMark := *activeWaterMark
 	// tmpSuccedWaterMark := *succedWaterMark
 	// tmpFailedWaterMark := *failedWaterMark
@@ -235,7 +235,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			{
 				//logger.Info("Job Avtive", "JobName", v.Name, "CreateTime", v.CreationTimestamp)
 				if activeWaterMark.Before(&v.CreationTimestamp) {
-					activeJob = append(activeJob, &v)
+					// activeJob = append(activeJob, &v)
 					crStatusRep.LatestCreateTime = &v.CreationTimestamp
 					// tmpActiveWaterMark = v.CreationTimestamp
 					PbakTotalJob.Inc()
@@ -257,7 +257,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			{
 				//logger.Info("Job Completed", "JobName", v.Name, "Time", v.Status.CompletionTime)
 				if succedWaterMark.Before(v.Status.CompletionTime) {
-					completedJob = append(completedJob, &v)
+					// completedJob = append(completedJob, &v)
 					PsucceedJobs.Inc()
 					crStatusRep.LatestSucceedTime = v.Status.CompletionTime
 					// tmpSuccedWaterMark = *v.Status.CompletionTime
@@ -267,7 +267,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 					meta.SetStatusCondition(&crStatusRep.Conditions, metav1.Condition{
 						Type:               "Available",
 						Status:             metav1.ConditionTrue,
-						Reason:             fmt.Sprintf("Completed:%dof%d", len(completedJob), len(JobList.Items)),
+						Reason:             "JobCompleted",
 						Message:            "All pods of job is completed",
 						LastTransitionTime: metav1.NewTime(time.Now()),
 					})
@@ -279,7 +279,7 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			{
 				//logger.Info("Job Failed", "JobName", v.Name)
 				if failedWaterMark.Before(&v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime) {
-					failedJob = append(failedJob, &v)
+					// failedJob = append(failedJob, &v)
 					PfailedJobs.Inc()
 					crStatusRep.LatestFailedTime = &v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime
 					// tmpFailedWaterMark = v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime
@@ -307,55 +307,56 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			return ctrl.Result{}, err
 		}
 	}
-
-	// if len(activeJob) > 0 {
-	// 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-	// 		Type:               "Shcdulered",
-	// 		Status:             metav1.ConditionTrue,
-	// 		Reason:             "jobSchedulered",
-	// 		Message:            "Job is running!!! ",
-	// 		LastTransitionTime: metav1.NewTime(time.Now()),
-	// 	})
-	// 	instance.Status.LastBakStatus = "running"
-	// 	instance.Status.LastReason = "Job is running"
-	// 	if err := r.Status().Update(ctx, instance); err != nil {
-	// 		logger.Error(err, "Failed update status")
-	// 		return ctrl.Result{}, err
-	// 	}
-	// 	logger.Info("Activce Status update", "status", instance.Status.LastBakStatus)
-	// } else if len(failedJob) > 0 {
-	// 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-	// 		Type:               "Available",
-	// 		Status:             metav1.ConditionFalse,
-	// 		Reason:             "PodForJobsFailed",
-	// 		Message:            "Have pods of job %v status is failed",
-	// 		LastTransitionTime: metav1.NewTime(time.Now()),
-	// 	})
-	// 	instance.Status.LastBakStatus = "failed"
-	// 	instance.Status.LastReason = "Job is failed"
-	// 	if err := r.Status().Update(ctx, instance); err != nil {
-	// 		logger.Error(err, "Failed update status")
-	// 		return ctrl.Result{}, err
-	// 	}
-	// 	logger.Info("Failed Status update", "status", instance.Status.LastBakStatus)
-	// } else if len(completedJob) > 0 {
-	// 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-	// 		Type:               "Available",
-	// 		Status:             metav1.ConditionTrue,
-	// 		Reason:             fmt.Sprintf("Completed:%dof%d", len(completedJob), len(JobList.Items)),
-	// 		Message:            "All pods of job is completed",
-	// 		LastTransitionTime: metav1.NewTime(time.Now()),
-	// 	})
-	// 	instance.Status.LastBakStatus = "Completed"
-	// 	instance.Status.LastReason = "Job is succeed"
-	// 	if err := r.Status().Update(ctx, instance); err != nil {
-	// 		logger.Error(err, "Failed update status")
-	// 		return ctrl.Result{}, err
-	// 	}
-	// 	logger.Info("Succeed Status update ", "status", instance.Status.LastBakStatus)
-	// }
+	logger.Info("Nothing to do")
 	return ctrl.Result{}, nil
 }
+
+// if len(activeJob) > 0 {
+// 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+// 		Type:               "Shcdulered",
+// 		Status:             metav1.ConditionTrue,
+// 		Reason:             "jobSchedulered",
+// 		Message:            "Job is running!!! ",
+// 		LastTransitionTime: metav1.NewTime(time.Now()),
+// 	})
+// 	instance.Status.LastBakStatus = "running"
+// 	instance.Status.LastReason = "Job is running"
+// 	if err := r.Status().Update(ctx, instance); err != nil {
+// 		logger.Error(err, "Failed update status")
+// 		return ctrl.Result{}, err
+// 	}
+// 	logger.Info("Activce Status update", "status", instance.Status.LastBakStatus)
+// } else if len(failedJob) > 0 {
+// 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+// 		Type:               "Available",
+// 		Status:             metav1.ConditionFalse,
+// 		Reason:             "PodForJobsFailed",
+// 		Message:            "Have pods of job %v status is failed",
+// 		LastTransitionTime: metav1.NewTime(time.Now()),
+// 	})
+// 	instance.Status.LastBakStatus = "failed"
+// 	instance.Status.LastReason = "Job is failed"
+// 	if err := r.Status().Update(ctx, instance); err != nil {
+// 		logger.Error(err, "Failed update status")
+// 		return ctrl.Result{}, err
+// 	}
+// 	logger.Info("Failed Status update", "status", instance.Status.LastBakStatus)
+// } else if len(completedJob) > 0 {
+// 	meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+// 		Type:               "Available",
+// 		Status:             metav1.ConditionTrue,
+// 		Reason:             fmt.Sprintf("Completed:%dof%d", len(completedJob), len(JobList.Items)),
+// 		Message:            "All pods of job is completed",
+// 		LastTransitionTime: metav1.NewTime(time.Now()),
+// 	})
+// 	instance.Status.LastBakStatus = "Completed"
+// 	instance.Status.LastReason = "Job is succeed"
+// 	if err := r.Status().Update(ctx, instance); err != nil {
+// 		logger.Error(err, "Failed update status")
+// 		return ctrl.Result{}, err
+// 	}
+// 	logger.Info("Succeed Status update ", "status", instance.Status.LastBakStatus)
+// }
 
 func (r *MySQLBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//创建索引器

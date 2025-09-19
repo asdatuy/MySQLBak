@@ -9,7 +9,7 @@ metadata:
 spec:
   host: "mysqltest"
   dbAuth: "sqlsecret"
-  dbName: "mysql"
+  dbName: "test1"
   bakMode: "s3"
   s3Bak:
     endpoint: "http://192.168.100.110:9000"

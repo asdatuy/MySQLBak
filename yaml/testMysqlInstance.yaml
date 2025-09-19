@@ -14,8 +14,15 @@ spec:
     env:
     - name: MYSQL_ROOT_PASSWORD
       value: qweQWE123
+    volumeMounts:
+    - name: testdb
+      mountPath: /var/lib/mysql
   dnsPolicy: ClusterFirst
   restartPolicy: Always
+  volumes:
+  - name: testdb
+    persistentVolumeClaim:
+      claimName: mysqltestpvc
 status: {}
 ---
 apiVersion: v1
@@ -32,17 +39,30 @@ spec:
     targetPort: 3306
   selector:
     run: mysqltest
-  type: ClusterIP
+  type: NodePort
 status:
   loadBalancer: {}
 ---
 apiVersion: v1
-data:
-  "mysqlCredential": dXNlcjogcm9vdApwYXNzd2Q6IHF3ZVFXRTEyMwpob3N0OiBteXNxbHRlc3QKcG9ydDogMzMwNgpkYjogdGVzdERCCg==
-kind: Secret
+kind: PersistentVolumeClaim
 metadata:
-  creationTimestamp: null
-  name: s1
+  name: mysqltestpvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: local-path
+#---
+#apiVersion: v1
+#data:
+#  "mysqlCredential": dXNlcjogcm9vdApwYXNzd2Q6IHF3ZVFXRTEyMwpob3N0OiBteXNxbHRlc3QKcG9ydDogMzMwNgpkYjogdGVzdERCCg==
+#kind: Secret
+#metadata:
+#  creationTimestamp: null
+#  name: s1
 #---
 #apiVersion: batch/v1
 #kind: Job

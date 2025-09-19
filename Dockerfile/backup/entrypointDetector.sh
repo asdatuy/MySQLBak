@@ -10,7 +10,7 @@ sqlTest(){
     fi
     echo "try to access db"
 
-    mysql -u${user} -p${passwd} -h${rHost} -P${rPort} ${rDBName} --skip-column-names -e 'select 1' 2> /dev/null
+    mysql -u${user} -p${passwd} -h${rHost} -P${rPort} ${rDBName} -e 'select 1' 2> /dev/null
     if [[ $? != 0 ]]
     then
         echo "Dont access db" >&2

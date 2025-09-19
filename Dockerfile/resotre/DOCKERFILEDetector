@@ -1,0 +1,7 @@
+FROM oraclelinux:9
+
+RUN dnf makecache && dnf install mysql nc rsync tar -y && dnf install -y https://dl.minio.org.cn/client/mc/release/linux-amd64/mc.rpm
+WORKDIR /sqlCredential
+COPY ./entrypointDetector.sh /entrypoint.sh
+#ENTRYPOINT ["sh","-c","/entrypoint.sh"]
+ENTRYPOINT ["bash","-x","/entrypoint.sh"]
