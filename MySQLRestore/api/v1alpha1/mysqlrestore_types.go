@@ -4,11 +4,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type ResoterMode string
+
+const (
+	NewTargetMode    ResoterMode = "NewTargetMode"
+	SourceTargetMode ResoterMode = "SourceTargetMode"
+)
+
 type DbSpec struct {
 	// +required
 	DbHost string `json:"dbHost"`
 	// +optional
-	// +default=3306
+	// +default="3306"
 	DbPort string `json:"dbPort"`
 	// +required
 	DbName string `json:"dbName"`
@@ -23,31 +30,59 @@ type S3Spec struct {
 	Bucket string `json:"bucket"`
 	// +required
 	S3Auth string `json:"s3Auth"`
+	// +required
+	// +default="latest"
+	RestoreVid string `json:"restoreVid,omitempty"`
+}
+
+type NewTargetModeSpec struct {
+	// +required
+	DbSpec DbSpec `json:"dbSpec"`
+}
+
+type SourceTargetModeSpec struct {
+	// +required
+	BakDBName string `json:"bakDBName,omitempty"`
+}
+
+type RestoreModeSpec struct {
+	// +required
+	ResotreMode ResoterMode `json:"restoreMode"`
 	// +optional
-	RestoreVid *string `json:"restoreVid,omitempty"`
+	NewTargetModeSpec *NewTargetModeSpec `json:"newTargetModeSpec,omitempty"`
+	// +optional
+	SourceTargetModeSpec *SourceTargetModeSpec `json:"sourceTargetModeSpec,omitempty"`
 }
 
 type MySQLRestoreSpec struct {
 	// +required
-	DbSpec DbSpec `json:"DbSpec"`
+	DbSpec DbSpec `json:"dbSpec"`
 	// +required
-	S3Spec S3Spec `json:"S3Spec"`
+	S3Spec S3Spec `json:"s3Spec"`
+	// +required
+	ResotreModeSpec RestoreModeSpec `json:"restoreModeSpec"`
 }
 
-type LastRestoreSpce struct {
+type LastRestoreSpec struct {
 	// +requird
 	DbHost string `json:"dbHost"`
 	// +requird
 	DbName string `json:"dbName"`
-	// +required
-	RestoreVerison string `json:"restoreVersion"`
+	// +optional
+	RestoreVerison *string `json:"restoreVersion,omitempty"`
 }
 
 type MySQLRestoreStatus struct {
 	// +required
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 	// +optional
-	LastRestoreSpec LastRestoreSpce `json:"lastRestoreSpec,omitempty"`
+	LastRestoreSpec *LastRestoreSpec `json:"lastRestoreSpec,omitempty"`
+	// +optional
+	LastStartTime *metav1.Time `json:"lastStartTime,omitempty"`
+	// +optional
+	LastSucceedTime *metav1.Time `json:"lastSucceedTime,omitempty"`
+	// +optional
+	LastFailedTime *metav1.Time `json:"lastSailedTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -59,7 +94,7 @@ type MySQLRestore struct {
 	// +required
 	Spec MySQLRestoreSpec `json:"spec"`
 	// +optional
-	Status MySQLRestoreStatus `json:"status,omitempty,omitzero"`
+	Status MySQLRestoreStatus `json:"status"`
 }
 
 // +kubebuilder:object:root=true

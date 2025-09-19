@@ -6,4 +6,24 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: mysqlrestore-sample
 spec:
-  # TODO(user): Add fields here
+  dbSpec:
+    dbHost: "mysqltest"
+    dbPort: "3306"
+    dbName: "test1"
+    dbAuth: "sqlsecret"
+  s3Spec:
+    endpoint: "http://192.168.100.110:9000"
+    bucket: "sqldumerfile"
+    s3Auth: "s3secret"
+    restoreVid: "latest"
+  restoreModeSpec:
+    #restoreMode: "SourceTargetMode"
+    # sourceTargetModeSpec:
+    #   bakDBName: "mysqltest"
+    restoreMode: "NewTargetMode"
+    newTargetModeSpec:
+      dbSpec:
+        dbHost: "destmysqltest"
+        dbPort: "3306"
+        dbName: "test1"
+        dbAuth: "destsqlsecret"
