@@ -7,26 +7,15 @@ NewTargetMode(){
     duser=$(cat /destSqlAuth/* | grep user | awk -F " " '{print $2}')
     dpasswd=$(cat /destSqlAuth/* | grep passwd | awk -F " " '{print $2}')
 
-    ac=$(cat /s3Auth/* | grep ac | awk -F " " '{print $2}')
-    sc=$(cat /s3Auth/* | grep sc | awk -F " " '{print $2}')
+    ac=$(cat /s3Auth/ac)
+    sc=$(cat /s3Auth/sc)
 
     mcli alias set myminio/ ${S3Endpoint} ${ac} ${sc}
-    if [[ ${S3Version} == "latest" ]]; then
-        mcli cat myminio/${S3Bucket}/${rDBName}.zst | zstdcat | mysql -u${user} -p${passwd} -P${dPort} -h${dHost} ${dDBName}
-        if [[ $? != 0 ]]
-        then
-            echo "Restore failed"
-            exit 1
-        fi
-        echo "Resotre Succed"
-        exit 0
-    fi
-
-    mcli cat --version-id ${S3Version} myminio/${S3Bucket}/${rDBName}.zst | zstdcat | mysql -u${user} -p${passwd} -P${dPort} -h${dHost} ${dDBName}
+    mcli cat myminio/${S3Path} | zstdcat | mysql -u${user} -p${passwd} -P${dPort} -h${dHost} ${dDBName}
     if [[ $? != 0 ]]
     then
-        echo "Resotre failed"
-        exit 1
+       echo "Restore failed"
+       exit 1
     fi
     echo "Resotre Succed"
     exit 0
@@ -49,25 +38,15 @@ SourceTargetMode(){
     fi
     echo "Origin DB is backup"
     ## Resotre
-    if [[ ${S3Version} == "latest" ]]; then
-        mcli cat myminio/${S3Bucket}/${rDBName}.zst | zstdcat | mysql -u${user} -p${passwd} -P${rPort} -h${rHost} ${rDBName}
-        if [[ $? != 0 ]]
-        then
-            echo "Restore failed"
-            exit 1
-        fi
-        echo "Resotre Succed"
-        exit 0
-    fi
-
-    mcli cat --version-id ${S3Version} myminio/${S3Bucket}/${rDBName}.zst | zstdcat | mysql -u${user} -p${passwd} -P${rPort} -h${rHost} ${rDBName}
+    mcli cat myminio/${S3Path} | zstdcat | mysql -u${user} -p${passwd} -P${rPort} -h${rHost} ${rDBName}
     if [[ $? != 0 ]]
     then
         echo "Restore failed"
         exit 1
     fi
-    echo "Restore Succed"
+    echo "Resotre Succed"
     exit 0
+
 }
 
 case ${TargetMode} in

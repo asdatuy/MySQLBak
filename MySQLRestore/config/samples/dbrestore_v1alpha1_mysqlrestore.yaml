@@ -13,9 +13,8 @@ spec:
     dbAuth: "sqlsecret"
   s3Spec:
     endpoint: "http://192.168.100.110:9000"
-    bucket: "sqldumerfile"
-    s3Auth: "s3secret"
-    restoreVid: "latest"
+    path: "sqldumerfile/default/528ec90b-0fa0-42f6-af48-3b96e1a0c616/mysqltest:3306/test1/2025-10-18T17:32:54Z.zst"
+    s3Auth: "s3secrets"
   restoreModeSpec:
     #restoreMode: "SourceTargetMode"
     # sourceTargetModeSpec:

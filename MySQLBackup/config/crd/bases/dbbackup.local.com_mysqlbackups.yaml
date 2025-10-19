@@ -62,18 +62,6 @@ spec:
               port:
                 default: "3306"
                 type: string
-              pvBak:
-                properties:
-                  path:
-                    type: string
-                  pvName:
-                    type: string
-                  scName:
-                    type: string
-                required:
-                - path
-                - pvName
-                type: object
               s3Bak:
                 properties:
                   bucket:
@@ -97,6 +85,24 @@ spec:
             type: object
           status:
             properties:
+              availableVersion:
+                items:
+                  properties:
+                    available:
+                      default: ""
+                      type: string
+                    backTimeStep:
+                      type: string
+                    path:
+                      type: string
+                    server:
+                      type: string
+                  required:
+                  - available
+                  - path
+                  - server
+                  type: object
+                type: array
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -156,10 +162,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              lastBakStatus:
-                type: string
-              lastCreateTime:
+              lastActiveTime:
                 format: date-time
+                type: string
+              lastBakStatus:
                 type: string
               lastFailedTime:
                 format: date-time
@@ -169,6 +175,10 @@ spec:
               lastSucceedTime:
                 format: date-time
                 type: string
+            required:
+            - lastActiveTime
+            - lastFailedTime
+            - lastSucceedTime
             type: object
         required:
         - spec

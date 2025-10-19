@@ -1,0 +1,60 @@
+# Please edit the object below. Lines beginning with a '#' will be ignored,
+# and an empty file will abort the edit. If an error occurs while saving this file will be
+# reopened with the relevant failures.
+#
+apiVersion: dbbackup.local.com/v1alpha1
+kind: MySQLBackup
+metadata:
+  creationTimestamp: "2025-10-17T16:08:03Z"
+  deletionGracePeriodSeconds: 0
+  deletionTimestamp: "2025-10-17T16:10:19Z"
+  generation: 4
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: mysqlbackup
+  name: mysqlbackup
+  namespace: default
+  resourceVersion: "582000"
+  uid: dcb7ecd8-f808-4dde-8991-064488b2e9ed
+spec:
+  bakMode: s3
+  dbAuth: sqlsecret
+  dbName: test1
+  host: mysqltest
+  manualTrigger: false
+  port: "3306"
+  s3Bak:
+    bucket: sqldumerfile
+    endpoint: http://192.168.100.110:9000
+    s3Auth: s3secrets
+status:
+  availableVersion:
+  - available: "true"
+    backTimeStep: "2025-10-17T16:08:03Z"
+    path: default/dcb7ecd8-f808-4dde-8991-064488b2e9ed/mysqltest:3306/test1.zst
+    server: http://192.168.100.110:9000/sqldumerfile
+  - available: "true"
+    backTimeStep: "2025-10-17T16:08:27Z"
+    path: default/dcb7ecd8-f808-4dde-8991-064488b2e9ed/mysqltest:3306/test1.zst
+    server: http://192.168.100.110:9000/sqldumerfile
+  conditions:
+  - lastTransitionTime: "2025-10-17T16:08:03Z"
+    message: Start Reconcil
+    reason: Reconcing
+    status: Unknown
+    type: unkonw
+  - lastTransitionTime: "2025-10-17T16:08:03Z"
+    message: jobIsRunning
+    reason: jobSchedulered
+    status: "True"
+    type: Shcdulered
+  - lastTransitionTime: "2025-10-17T16:08:07Z"
+    message: All pods of job is completed
+    reason: JobCompleted
+    status: "True"
+    type: Available
+  lastActiveTime: "2025-10-17T16:08:27Z"
+  lastBakStatus: completed
+  lastFailedTime: "1970-01-01T00:00:00Z"
+  lastReason: Job is succeed
+  lastSucceedTime: "2025-10-17T16:08:31Z"

@@ -1,0 +1,226 @@
+package controller
+
+import (
+	"context"
+	"reflect"
+	"sort"
+	"time"
+
+	dbbackupv1alpha1 "local/MySQLBackup/api/v1alpha1" // 替换成你自己的项目路径
+
+	batchv1 "k8s.io/api/batch/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+// ... (省略你的Reconciler结构体和var()常量定义) ...
+
+// Reconcile 是我们控制器的总入口，它扮演“总调度员”的角色。
+// 它的职责非常简单：获取最新状态，然后根据状态分发任务。
+func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	// 1. 获取CR实例，这是我们观察到的“世界快照”。
+	original := &dbbackupv1alpha1.MySQLBackup{}
+	if err := r.Get(ctx, req.NamespacedName, original); err != nil {
+		// 如果资源找不到了，说明已经被删除了，我们直接忽略即可。
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// 2. 任务分发：根据对象是否正在被删除，来决定走哪条逻辑线。
+	if !original.DeletionTimestamp.IsZero() {
+		// 对象正在被删除，进入“身后事”处理逻辑。
+		return r.reconcileDelete(ctx, original)
+	}
+
+	// 对象是正常状态，进入常规的“状态机”处理逻辑。
+	return r.reconcileNormal(ctx, original)
+}
+
+// reconcileDelete 只负责一件事：处理Finalizer相关的清理工作。
+func (r *MySQLBackupReconciler) reconcileDelete(ctx context.Context, cr *dbbackupv1alpha1.MySQLBackup) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	if controllerutil.ContainsFinalizer(cr, myFinalizerName) {
+		log.Info("Performing Finalizer Operations")
+
+		// 在这里执行你的S3文件清理逻辑
+		if err := r.cleanupExternalResources(ctx, cr); err != nil {
+			log.Error(err, "Failed to cleanup external resources")
+			return ctrl.Result{}, err // 清理失败，返回error会触发重试
+		}
+
+		log.Info("External resources cleaned up, removing finalizer")
+		// 清理成功，从副本上移除Finalizer
+		modified := cr.DeepCopy()
+		controllerutil.RemoveFinalizer(modified, myFinalizerName)
+		if err := r.Update(ctx, modified); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// reconcileNormal 是我们核心的“状态机”。
+// 它由一系列互斥的if判断组成，每个判断都可能导致一次“写”操作和一次“返回”。
+func (r *MySQLBackupReconciler) reconcileNormal(ctx context.Context, original *dbbackupv1alpha1.MySQLBackup) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+	modified := original.DeepCopy()
+
+	// 棋局第一步：确保我们的“清理钩子”(Finalizer)已经就位。
+	// 这是所有操作的前提，如果它不存在，我们什么都不做，只把它加上。
+	if !controllerutil.ContainsFinalizer(modified, myFinalizerName) {
+		log.Info("Adding Finalizer for the first time")
+		controllerutil.AddFinalizer(modified, myFinalizerName)
+		return ctrl.Result{Requeue: true}, r.Update(ctx, modified) // 落子，返回
+	}
+
+	// 棋局第二步：确保Status已经被初始化。
+	// 后续所有逻辑都依赖一个有效的Status，如果它不存在，我们的唯一任务就是创建它。
+	if len(modified.Status.Conditions) == 0 {
+		log.Info("Initializing Status for the first time")
+		modified.Status = r.getInitialStatus()
+		// 使用Update而不是Patch，因为我们是整体替换
+		return ctrl.Result{Requeue: true}, r.Status().Update(ctx, modified) // 落子，返回
+	}
+
+	// 棋局第三步：响应并重置用户的“一次性”指令，比如ManualTrigger。
+	// 我们必须立刻处理并重置它，防止在后续的循环中被重复触发。
+	if modified.Spec.ManualTrigger {
+		log.Info("Manual trigger detected, resetting the flag")
+		modified.Spec.ManualTrigger = false
+		return ctrl.Result{Requeue: true}, r.Update(ctx, modified) // 落子，返回
+	}
+
+	// 棋局第四步：计算并同步“期望的状态”。
+	// 这是“大脑”思考的过程，它只计算，不执行动作。
+	var jobList batchv1.JobList
+	if err := r.List(ctx, &jobList, client.InNamespace(original.Namespace), client.MatchingFields{jobOwnerKey: original.Name}); err != nil {
+		return ctrl.Result{}, err
+	}
+	expectedStatus := r.calculateExpectedStatus(original, &jobList)
+
+	// 如果“期望的状态”和“当前的状态”不一致，我们唯一的任务就是同步它们。
+	if !reflect.DeepEqual(&original.Status, expectedStatus) {
+		log.Info("Status needs update, patching...")
+		modified.Status = *expectedStatus
+		// 使用Patch而不是Update，因为我们只想更新Status子资源
+		return ctrl.Result{Requeue: true}, r.Status().Patch(ctx, modified, client.MergeFrom(original)) // 落子，返回
+	}
+
+	// 棋局第五步：在所有状态都稳定和正确之后，才执行“动作”（创建Job）。
+	// 这是整个循环的最后一步，只有在棋盘上其他所有事情都就绪时才执行。
+	if r.shouldCreateNewJob(original) {
+		log.Info("All conditions met, creating a new backup Job")
+		// ... 在这里加入你的CheckSecret等前置检查 ...
+
+		job, err := r.buildJobStruct(original)
+		if err != nil {
+			log.Error(err, "Failed to build Job struct")
+			// (可选) 可以在这里更新Status来报告这个构建错误
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.Create(ctx, job) // 落子，返回
+	}
+
+	log.Info("Reconciliation complete, nothing to do.")
+	return ctrl.Result{}, nil
+}
+
+// --- 以下是辅助函数 ---
+
+// getInitialStatus 返回一个全新的、用于初始化的Status对象。
+func (r *MySQLBackupReconciler) getInitialStatus() dbbackupv1alpha1.MySQLBackupStatus {
+	return dbbackupv1alpha1.MySQLBackupStatus{
+		Conditions: []metav1.Condition{
+			{
+				Type:   "Initialized",
+				Status: metav1.ConditionTrue,
+				Reason: "Reconciling",
+			},
+		},
+		LatestActiveTime:  &metav1.Time{Time: time.Unix(0, 0)},
+		LatestSucceedTime: &metav1.Time{Time: time.Unix(0, 0)},
+		LatestFailedTime:  &metav1.Time{Time: time.Unix(0, 0)},
+	}
+}
+
+// calculateExpectedStatus 是控制器的“大脑”。
+// 它是一个纯函数，只根据输入计算输出，不执行任何写操作（除了Prometheus指标）。
+func (r *MySQLBackupReconciler) calculateExpectedStatus(cr *dbbackupv1alpha1.MySQLBackup, jobList *batchv1.JobList) *dbbackupv1alpha1.MySQLBackupStatus {
+	newStatus := cr.Status.DeepCopy()
+
+	// 1. 水位线逻辑：遍历所有已存在的Jobs，更新水位线和Prometheus指标
+	sort.Slice(jobList.Items, func(i, j int) bool {
+		return jobList.Items[i].CreationTimestamp.Before(&jobList.Items[j].CreationTimestamp)
+	})
+
+	for _, job := range jobList.Items {
+		isFinished, jobStatusType := isJobFinished(&job)
+		if isFinished {
+			if jobStatusType == batchv1.JobComplete && job.Status.CompletionTime.After(newStatus.LatestSucceedTime.Time) {
+				PsucceedJobs.Inc()
+				newStatus.LatestSucceedTime = job.Status.CompletionTime
+			}
+			if jobStatusType == batchv1.JobFailed && job.Status.Conditions[0].LastTransitionTime.After(newStatus.LatestFailedTime.Time) {
+				PfailedJobs.Inc()
+				newStatus.LatestFailedTime = &job.Status.Conditions[0].LastTransitionTime
+			}
+		} else { // Job is still running
+			if job.CreationTimestamp.After(newStatus.LatestActiveTime.Time) {
+				PbakTotalJob.Inc()
+				newStatus.LatestActiveTime = &job.CreationTimestamp
+			}
+		}
+	}
+
+	// 2. 【核心】预记录意图：如果判断需要创建一个新Job，我们先在Status里把它的“坑”占好。
+	if r.shouldCreateNewJob(cr) {
+		newPath, _ := r.buildBackupPath(cr) // 在真实代码中需要处理error
+
+		// 检查这个路径是否已经被记录，防止重复添加
+		pathExists := false
+		for _, v := range newStatus.AvailableVersion {
+			if v.Path == newPath {
+				pathExists = true
+				break
+			}
+		}
+
+		if !pathExists {
+			newStatus.AvailableVersion = append(newStatus.AvailableVersion, dbbackupv1alpha1.AvailableVersion{
+				Path:      newPath,
+				Available: "Pending", // 初始状态是“待定”
+			})
+		}
+	}
+
+	// 3. (可选) 更新Condition等其他状态...
+
+	return newStatus
+}
+
+// shouldCreateNewJob 判断是否需要创建一个新的备份Job。
+func (r *MySQLBackupReconciler) shouldCreateNewJob(cr *dbbackupv1alpha1.MySQLBackup) bool {
+	// 这是一个简化的逻辑，你可以扩展它
+	// 这里的cr.Spec.ManualTrigger是在上一步已经被重置为false了，所以我们应该检查原始对象
+	// 但在这个简单的模型里，我们假设触发后就应该创建一个Job
+	// 一个更健壮的检查是看是否有“Pending”的AvailableVersion
+	for _, v := range cr.Status.AvailableVersion {
+		if v.Available == "Pending" {
+			// 已经有一个待处理的备份任务了，暂时不创建新的
+			// (但我们还需要检查是否有对应的Job，如果没有才创建)
+			// 为了简化，我们先假设每次Reconcile只处理一个Job
+			return true // 这里需要更复杂的逻辑来匹配Pending版本和现有Jobs
+		}
+	}
+	return cr.Spec.ManualTrigger // 实际上这个值已经被重置了，所以这个判断需要更复杂
+	// 一个更好的逻辑是: return original.Spec.ManualTrigger
+	// 我们暂时简化为: return true 如果没有活跃的Job
+}
+
+// (此处省略 buildJobStruct, buildBackupPath, isJobFinished, cleanupExternalResources 等你已经熟悉的辅助函数)

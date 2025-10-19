@@ -27,12 +27,9 @@ type S3Spec struct {
 	// +required
 	Endpoint string `json:"endpoint"`
 	// +required
-	Bucket string `json:"bucket"`
+	Path string `json:"path"`
 	// +required
 	S3Auth string `json:"s3Auth"`
-	// +required
-	// +default="latest"
-	RestoreVid string `json:"restoreVid,omitempty"`
 }
 
 type NewTargetModeSpec struct {
@@ -42,16 +39,16 @@ type NewTargetModeSpec struct {
 
 type SourceTargetModeSpec struct {
 	// +required
-	BakDBName string `json:"bakDBName,omitempty"`
+	BakDBName string `json:"bakDBName,omitzero"`
 }
 
 type RestoreModeSpec struct {
 	// +required
 	ResotreMode ResoterMode `json:"restoreMode"`
 	// +optional
-	NewTargetModeSpec *NewTargetModeSpec `json:"newTargetModeSpec,omitempty"`
+	NewTargetModeSpec *NewTargetModeSpec `json:"newTargetModeSpec,omitzero"`
 	// +optional
-	SourceTargetModeSpec *SourceTargetModeSpec `json:"sourceTargetModeSpec,omitempty"`
+	SourceTargetModeSpec *SourceTargetModeSpec `json:"sourceTargetModeSpec,omitzero"`
 }
 
 type MySQLRestoreSpec struct {
@@ -68,21 +65,19 @@ type LastRestoreSpec struct {
 	DbHost string `json:"dbHost"`
 	// +requird
 	DbName string `json:"dbName"`
-	// +optional
-	RestoreVerison *string `json:"restoreVersion,omitempty"`
 }
 
 type MySQLRestoreStatus struct {
 	// +required
-	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+	Conditions []metav1.Condition `json:"conditions,omitzero" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 	// +optional
-	LastRestoreSpec *LastRestoreSpec `json:"lastRestoreSpec,omitempty"`
+	LastRestoreSpec LastRestoreSpec `json:"lastRestoreSpec,omitzero"`
 	// +optional
-	LastStartTime *metav1.Time `json:"lastStartTime,omitempty"`
+	LastStartTime metav1.Time `json:"lastStartTime,omitzero"`
 	// +optional
-	LastSucceedTime *metav1.Time `json:"lastSucceedTime,omitempty"`
+	LastSucceedTime metav1.Time `json:"lastSucceedTime,omitzero"`
 	// +optional
-	LastFailedTime *metav1.Time `json:"lastSailedTime,omitempty"`
+	LastFailedTime metav1.Time `json:"lastSailedTime,omitzero"`
 }
 
 // +kubebuilder:object:root=true
@@ -90,7 +85,7 @@ type MySQLRestoreStatus struct {
 type MySQLRestore struct {
 	metav1.TypeMeta `json:",inline"`
 	// +optional
-	metav1.ObjectMeta `json:"metadata,omitempty,omitzero"`
+	metav1.ObjectMeta `json:"metadata,omitzero"`
 	// +required
 	Spec MySQLRestoreSpec `json:"spec"`
 	// +optional
@@ -100,7 +95,7 @@ type MySQLRestore struct {
 // +kubebuilder:object:root=true
 type MySQLRestoreList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
+	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []MySQLRestore `json:"items"`
 }
 

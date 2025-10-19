@@ -14,4 +14,4 @@ spec:
   s3Bak:
     endpoint: "http://192.168.100.110:9000"
     bucket: "sqldumerfile"
-    s3Auth: "s3secret"
+    s3Auth: "s3secrets"

@@ -6,8 +6,9 @@ import (
 	dbbackupv1alpha1 "local/MySQLBackup/api/v1alpha1"
 	"reflect"
 	"sort"
-	"strconv"
 	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/prometheus/client_golang/prometheus"
 	batchv1 "k8s.io/api/batch/v1"
@@ -16,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -28,22 +30,21 @@ type MySQLBackupReconciler struct {
 }
 
 var (
-	jobOwnerKey  = ".metadata.controller"
-	apiGVStr     = dbbackupv1alpha1.GroupVersion.String()
-	PbakTotalJob = prometheus.NewCounter(
+	jobOwnerKey     = ".metadata.controller"
+	apiGVStr        = dbbackupv1alpha1.GroupVersion.String()
+	myFinalizerName = "dbbackup.local.com/finalizer"
+	PbakTotalJob    = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "bakJobTotal",
 			Help: "Number of total jobs",
 		},
 	)
-
 	PsucceedJobs = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "succeedJobs",
 			Help: "Number of succeed jobs",
 		},
 	)
-
 	PfailedJobs = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "bakJobfiled",
@@ -63,17 +64,39 @@ func init() {
 // +kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get;list;watch;create;update;patch;delete
 func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
-
-	instance := &dbbackupv1alpha1.MySQLBackup{}
-	err := r.Get(ctx, req.NamespacedName, instance)
 	// 确认能连接上 Apiserver 并存在 Instance
-	if err != nil {
+	instance := &dbbackupv1alpha1.MySQLBackup{}
+	if err := r.Get(ctx, req.NamespacedName, instance); err != nil {
 		if apierrors.IsNotFound(err) {
-			logger.Error(err, "No CRD instance avliable")
+			logger.Info("[Instance]No CRD instance avliable")
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "Not fetch CRD")
+		logger.Error(err, "[CRD]Not fetch CRD")
 		return ctrl.Result{}, err
+	}
+
+	// Finalizer
+	if instance.DeletionTimestamp.IsZero() && !controllerutil.ContainsFinalizer(instance, myFinalizerName) {
+		if changed := controllerutil.AddFinalizer(instance, myFinalizerName); changed {
+			if err := r.Update(ctx, instance); err != nil {
+				logger.Error(err, "[Finalizer]Faild add finalizer tags")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, nil
+	} else if !instance.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(instance, myFinalizerName) {
+		if err := r.DeletesS3File(instance); err != nil {
+			return ctrl.Result{}, err
+		}
+		if changed := controllerutil.RemoveFinalizer(instance, myFinalizerName); changed {
+			if err := r.Update(ctx, instance); err != nil {
+				logger.Error(err, "[Finalizer]Faild remove finalizer tags")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, nil
 	}
 
 	// 为没有status的CR添加状态
@@ -85,20 +108,31 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			Message:            "Start Reconcil",
 			LastTransitionTime: metav1.NewTime(time.Now()),
 		})
+		instance.Status.LatestActiveTime = metav1.Time{Time: time.Unix(0, 0)}
+		instance.Status.LatestSucceedTime = metav1.Time{Time: time.Unix(0, 0)}
+		instance.Status.LatestFailedTime = metav1.Time{Time: time.Unix(0, 0)}
+		instance.Status.AvailableVersion = []dbbackupv1alpha1.AvailableVersion{}
+		instance.Status.LastBakStatus = "unknow"
+		instance.Status.LastReason = "unknow"
 		// 更新状态
 		if err := r.Status().Update(ctx, instance); err != nil {
-			logger.Error(err, "Failed update status")
+			logger.Error(err, "[InitStatus]Failed update status")
 			return ctrl.Result{}, err
 		}
-		// 更新状态后获取CR
-		if err := r.Get(ctx, req.NamespacedName, instance); err != nil {
-			logger.Error(err, "Re-fetch failed")
-			return ctrl.Result{}, err
-		}
+		return ctrl.Result{}, nil
 	}
 
-	// 获取CR副本
-	crStatusRep := instance.Status.DeepCopy()
+	// 获取由当前CR实例拥有的Job
+	var JobList batchv1.JobList
+	if err := r.List(ctx, &JobList, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
+		logger.Error(err, "Error to fetch job owner by CRD")
+		return ctrl.Result{}, err
+	}
+
+	// 对JobList进行CreateTime的排序
+	sort.Slice(JobList.Items, func(i int, j int) bool {
+		return JobList.Items[i].CreationTimestamp.Before(&JobList.Items[j].CreationTimestamp)
+	})
 
 	// 获取Job最后的状态信息
 	isJobFinished := func(job *batchv1.Job) (bool, batchv1.JobConditionType) {
@@ -110,204 +144,204 @@ func (r *MySQLBackupReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return false, ""
 	}
 
-	// 获取由当前CR实例拥有的Job
-	var JobList batchv1.JobList
-	if err := r.List(ctx, &JobList, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
-		logger.Error(err, "Error to fetch job owner by CRD")
-		return ctrl.Result{}, err
-	}
-
+	crRep := instance.DeepCopy()
 	// 手动触发与job为0时创建Job
-	if len(JobList.Items) == 0 || instance.Spec.ManualTrigger == true {
-		if instance.Spec.ManualTrigger {
-			logger.Info("Manual Trigger", "ManualTrigger", instance.Spec.ManualTrigger)
-			instance.Spec.ManualTrigger = false
-			if err = r.Update(ctx, instance); err != nil {
-				logger.Error(err, "Error to update manualTrigger", instance.Name)
-				return ctrl.Result{}, err
+	if len(JobList.Items) == 0 || crRep.Spec.ManualTrigger == true {
+		AuthList := []string{crRep.Spec.DBAuth, crRep.Spec.S3Bak.S3Auth}
+		for _, auth := range AuthList {
+			dbAuthExist := r.CheckSecret(crRep, ctx, auth)
+			if !dbAuthExist {
+				logger.Info("[Auth]Not Found", "Secret", auth)
+				if changed := meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
+					Type:               "error",
+					Status:             metav1.ConditionFalse,
+					Reason:             "DBCredentailsNotFound",
+					Message:            fmt.Sprintf("Secret %v Not Found", auth),
+					LastTransitionTime: metav1.NewTime(time.Now()),
+				}); changed {
+					if err := r.Status().Update(ctx, crRep); err != nil {
+						logger.Error(err, "[Status]Failed AuthCheck")
+						return ctrl.Result{}, err
+					}
+					return ctrl.Result{}, nil
+				}
 			}
 		}
-		// 检查DBAuth是否存在
-		dbAuthExist := r.CheckSecret(instance, ctx, instance.Spec.DBAuth)
-		if !dbAuthExist {
-			logger.Error(err, "Failed to get DBAuth", "Secret", instance.Spec.DBAuth)
-			meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-				Type:               "error",
-				Status:             metav1.ConditionFalse,
-				Reason:             "DBCredentailsNotFound",
-				Message:            fmt.Sprintf("Secret %v Not Found", instance.Spec.DBAuth),
-				LastTransitionTime: metav1.NewTime(time.Now()),
-			})
-			if err := r.Status().Update(ctx, instance); err != nil {
-				logger.Error(err, "Failed update status")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, err
-		}
-		logger.Info("Found DBAuth!!!", "Secret", instance.Spec.DBAuth)
-		// 检查S3Auth是否存在
-		s3AuthExist := r.CheckSecret(instance, ctx, instance.Spec.S3Bak.S3Auth)
-		if !s3AuthExist {
-			logger.Error(err, "Failed to get s3Auth", "Secret", instance.Spec.S3Bak.S3Auth)
-			meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
-				Type:               "error",
-				Status:             metav1.ConditionFalse,
-				Reason:             "s3CredentailsNotFound",
-				Message:            fmt.Sprintf("Secret %v Not Found", instance.Spec.S3Bak.S3Auth),
-				LastTransitionTime: metav1.NewTime(time.Now()),
-			})
-			if err := r.Status().Update(ctx, instance); err != nil {
-				logger.Error(err, "Failed update status")
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{}, err
-		}
-		logger.Info("Found S3Auth!!!", "Secret", instance.Spec.S3Bak.S3Auth)
+
 		// 构建Job清单
-		tempJobName := instance.Name + "-" + strconv.Itoa(len(JobList.Items)+1)
-		jobCreate, err := r.BuildJobSruct(instance, tempJobName)
+		timeStep := metav1.NewTime(time.Now()).Format("2006-01-02T15:04:05Z")
+		bakPath := crRep.Namespace + "/" + string(crRep.UID) + "/" + crRep.Spec.Host + ":" + crRep.Spec.Port + "/" + crRep.Spec.DBName + "/" + timeStep + ".zst"
+		jobCreate, err := r.BuildJobSruct(crRep, bakPath)
 		if err != nil {
-			logger.Error(err, "Failed to create jobTemp")
-			meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+			logger.Error(err, "[JobTemp]Failed to create jobTemp")
+			if changed := meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 				Type:               "error",
 				Status:             metav1.ConditionFalse,
 				Reason:             "JobTempCreateError",
-				Message:            fmt.Sprintf("JobTemp %v Create Error", jobCreate.Name),
+				Message:            "JobTemp Create Error",
 				LastTransitionTime: metav1.NewTime(time.Now()),
-			})
-			if err := r.Status().Update(ctx, instance); err != nil {
-				logger.Error(err, "Failed update status")
-				return ctrl.Result{}, err
+			}); changed {
+				if err := r.Status().Update(ctx, crRep); err != nil {
+					logger.Error(err, "[Status]Failed TempCreate")
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, nil
 			}
-			return ctrl.Result{}, err
 		}
+
 		// 在集群中创建Job
-		logger.Info("Will create job", "JobName", jobCreate.Name, "namespace", jobCreate.Namespace)
-		if err = r.Create(ctx, jobCreate); err != nil {
-			logger.Error(err, "Failed to create job")
-			meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
+		if err := r.Create(ctx, jobCreate); err != nil {
+			if changed := meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 				Type:               "error",
 				Status:             metav1.ConditionFalse,
 				Reason:             "JobCreateError",
-				Message:            fmt.Sprintf("Job %v Create Error", jobCreate.Name),
+				Message:            "JobCreateError",
 				LastTransitionTime: metav1.NewTime(time.Now()),
-			})
-			if err := r.Status().Update(ctx, instance); err != nil {
-				logger.Error(err, "Failed update status")
+			}); changed {
+				if err := r.Status().Update(ctx, crRep); err != nil {
+					logger.Error(err, "[Status]Failed JobCreate")
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, nil
+			}
+		}
+
+		// Patch Status
+		patch := client.MergeFrom(crRep.DeepCopy())
+		crRep.Status.AvailableVersion = append(crRep.Status.AvailableVersion, dbbackupv1alpha1.AvailableVersion{
+			Path:         bakPath,
+			Server:       crRep.Spec.S3Bak.Endpoint,
+			BackTimeStep: timeStep,
+			Available:    "unknow",
+		})
+		if !reflect.DeepEqual(instance.Status, crRep.Status) {
+			if err := r.Status().Patch(ctx, crRep, patch); err != nil {
+				logger.Error(err, "[Status]Failed update Status")
 				return ctrl.Result{}, err
 			}
+		}
+
+		if crRep.Spec.ManualTrigger {
+			retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				//latest := &dbbackupv1alpha1.MySQLBackup{}
+				//if err := r.Get(ctx, req.NamespacedName, latest); err != nil {
+				//	return err
+				//}
+				//latest.Spec.ManualTrigger = false
+				crRep.Spec.ManualTrigger = false
+				return r.Update(ctx, crRep)
+			})
 		}
 		return ctrl.Result{}, nil
 	}
 
-	// 对JobList进行CreateTime的排序
-	sort.Slice(JobList.Items, func(i int, j int) bool {
-		return JobList.Items[i].CreationTimestamp.Before(&JobList.Items[j].CreationTimestamp)
-	})
-
-	// Water mark set and reset on nil
-	// activeWaterMark := instance.Status.LatestCreateTime
-	// succedWaterMark := instance.Status.LatestSucceedTime
-	// failedWaterMark := instance.Status.LatestFailedTime
-	activeWaterMark := crStatusRep.LatestCreateTime
-	succedWaterMark := crStatusRep.LatestSucceedTime
-	failedWaterMark := crStatusRep.LatestFailedTime
-	if activeWaterMark == nil {
-		activeWaterMark = &metav1.Time{}
-	}
-	if succedWaterMark == nil {
-		succedWaterMark = &metav1.Time{}
-	}
-	if failedWaterMark == nil {
-		failedWaterMark = &metav1.Time{}
-	}
-
-	// var activeJob []*batchv1.Job
-	// var failedJob []*batchv1.Job
-	// var completedJob []*batchv1.Job
-	// tmpActiveWaterMark := *activeWaterMark
-	// tmpSuccedWaterMark := *succedWaterMark
-	// tmpFailedWaterMark := *failedWaterMark
+	// sort Jobs and Set Status
 	for _, v := range JobList.Items {
 		_, jobFinStatus := isJobFinished(&v)
 		switch jobFinStatus {
 		case "":
 			{
-				//logger.Info("Job Avtive", "JobName", v.Name, "CreateTime", v.CreationTimestamp)
-				if activeWaterMark.Before(&v.CreationTimestamp) {
-					// activeJob = append(activeJob, &v)
-					crStatusRep.LatestCreateTime = &v.CreationTimestamp
-					// tmpActiveWaterMark = v.CreationTimestamp
+				if crRep.Status.LatestActiveTime.Before(&v.CreationTimestamp) {
 					PbakTotalJob.Inc()
-					logger.Info("New Active Jobs and Prometheus+1", "JobName", v.Name, "JobCreateTime", v.CreationTimestamp)
-					// logger.Info("activeWaterMark", "activeWaterMark", activeWaterMark)
-					// 设置临时crStaus
-					meta.SetStatusCondition(&crStatusRep.Conditions, metav1.Condition{
+					logger.Info("[Prometheus]Active+1", "JobName", v.Name, "JobCreateTime", v.CreationTimestamp)
+
+					patch := client.MergeFrom(crRep.DeepCopy())
+					crRep.Status.LatestActiveTime = v.CreationTimestamp
+					meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 						Type:               "Shcdulered",
 						Status:             metav1.ConditionTrue,
 						Reason:             "jobSchedulered",
-						Message:            "Job is running!!! ",
+						Message:            "jobIsRunning",
 						LastTransitionTime: metav1.NewTime(time.Now()),
 					})
-					crStatusRep.LastBakStatus = "running"
-					crStatusRep.LastReason = "Job is running"
+					crRep.Status.LastBakStatus = "running"
+					crRep.Status.LastReason = "Job is running"
+
+					if !reflect.DeepEqual(instance.Status, crRep.Status) {
+						if err := r.Status().Patch(ctx, crRep, patch); err != nil {
+							// if err := r.Status().Update(ctx, crRep); err != nil {
+							logger.Error(err, "[Status]FailedStausUpdate JobActive")
+							return ctrl.Result{}, err
+						}
+						//return ctrl.Result{}, nil
+					}
 				}
 			}
 		case batchv1.JobComplete:
 			{
-				//logger.Info("Job Completed", "JobName", v.Name, "Time", v.Status.CompletionTime)
-				if succedWaterMark.Before(v.Status.CompletionTime) {
-					// completedJob = append(completedJob, &v)
+				if crRep.Status.LatestSucceedTime.Before(v.Status.CompletionTime) {
 					PsucceedJobs.Inc()
-					crStatusRep.LatestSucceedTime = v.Status.CompletionTime
-					// tmpSuccedWaterMark = *v.Status.CompletionTime
-					logger.Info("New Succeed Jobs and Prometheus+1", "JobName", v.Name, "JobSucceedTime", v.Status.CompletionTime)
-					// logger.Info("succeedWaterMark", "succeedWaterMark", succedWaterMark)
-					// 设置临时crStaus
-					meta.SetStatusCondition(&crStatusRep.Conditions, metav1.Condition{
+					logger.Info("[Prometheus]Succeed+1", "JobName", v.Name, "JobCreateTime", v.CreationTimestamp)
+
+					patch := client.MergeFrom(crRep.DeepCopy())
+					crRep.Status.LatestSucceedTime = *v.Status.CompletionTime
+					crRep.Status.LastBakStatus = "completed"
+					crRep.Status.LastBakStatus = "Job is succeed"
+
+					meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 						Type:               "Available",
 						Status:             metav1.ConditionTrue,
 						Reason:             "JobCompleted",
 						Message:            "All pods of job is completed",
 						LastTransitionTime: metav1.NewTime(time.Now()),
 					})
-					crStatusRep.LastBakStatus = "completed"
-					crStatusRep.LastReason = "Job is succeed"
+
+					for i, v := range crRep.Status.AvailableVersion {
+						if v.Available == "unknow" {
+							if err := r.FetchS3File(crRep, v.Path); err != nil {
+								crRep.Status.AvailableVersion[i].Available = "false"
+							} else {
+								crRep.Status.AvailableVersion[i].Available = "true"
+								crRep.Status.AvailableVersion[i].Path = crRep.Spec.S3Bak.Bucket + "/" + v.Path
+							}
+						}
+					}
+
+					if !reflect.DeepEqual(instance.Status, crRep.Status) {
+						if err := r.Status().Patch(ctx, crRep, patch); err != nil {
+							logger.Error(err, "[Status]FailedStausUpdate JobCompleted")
+							return ctrl.Result{}, err
+						}
+					}
 				}
 			}
 		case batchv1.JobFailed:
 			{
-				//logger.Info("Job Failed", "JobName", v.Name)
-				if failedWaterMark.Before(&v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime) {
-					// failedJob = append(failedJob, &v)
+				if crRep.Status.LatestFailedTime.Before(&v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime) {
 					PfailedJobs.Inc()
-					crStatusRep.LatestFailedTime = &v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime
-					// tmpFailedWaterMark = v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime
-					logger.Info("New Failed Jobs and Prometheus+1", "jobName", v.Name, "JobFailedTime", v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime)
-					// logger.Info("failedMasterMark", "time", failedWaterMark)
-					// 设置临时cr
-					meta.SetStatusCondition(&crStatusRep.Conditions, metav1.Condition{
+					logger.Info("[Prometheus]Failed+1", "JobName", v.Name, "JobCreateTime", v.CreationTimestamp)
+
+					patch := client.MergeFrom(crRep.DeepCopy())
+					crRep.Status.LatestFailedTime = v.Status.Conditions[len(v.Status.Conditions)-1].LastTransitionTime
+					meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 						Type:               "Available",
 						Status:             metav1.ConditionFalse,
 						Reason:             "PodForJobsFailed",
-						Message:            "Have pods of job %v status is failed",
+						Message:            "Have pods of job status is failed",
 						LastTransitionTime: metav1.NewTime(time.Now()),
 					})
-					crStatusRep.LastBakStatus = "failed"
-					crStatusRep.LastReason = "Job is failed"
+					crRep.Status.LastBakStatus = "failed"
+					crRep.Status.LastReason = "Job is failed"
+
+					if !reflect.DeepEqual(instance.Status, crRep.Status) {
+						if err := r.Status().Patch(ctx, crRep, patch); err != nil {
+							logger.Error(err, "[Status]FailedStausUpdate JobFailed")
+							return ctrl.Result{}, err
+						}
+						//return ctrl.Result{}, nil
+					}
 				}
 			}
 		}
 	}
-
-	if !reflect.DeepEqual(crStatusRep, instance.Status) {
-		instance.Status = *crStatusRep.DeepCopy()
-		if err = r.Status().Update(ctx, instance); err != nil {
-			logger.Error(err, "Update status failed phase: final update")
+	if !reflect.DeepEqual(instance.Status, crRep.Status) {
+		if err := r.Status().Update(ctx, crRep); err != nil {
+			logger.Error(err, "[Status] Final Stage")
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{}, nil
 	}
-	logger.Info("Nothing to do")
+	logger.Info("[End]Nothing to do")
 	return ctrl.Result{}, nil
 }
 
@@ -381,7 +415,7 @@ func (r *MySQLBackupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&dbbackupv1alpha1.MySQLBackup{}).
-		Owns(&batchv1.Job{}).
+		Owns(&batchv1.Job{}). // Changed Logic 默认观察了所有的Job状态 导致每次创建Job至少是3次Resoncile触发
 		Named("mysqlbackup").
 		Complete(r)
 }

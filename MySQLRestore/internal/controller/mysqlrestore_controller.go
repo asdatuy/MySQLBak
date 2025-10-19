@@ -47,8 +47,6 @@ func (r *MySQLRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 	// initStatus
-	statuRep := instance.Status.DeepCopy()
-	specRep := instance.Spec.DeepCopy()
 	// rStatusUpdate := func(phase string) (ctrl.Result, error) {
 	// 	if !reflect.DeepEqual(statuRep, instance.Status) {
 	// 		instance.Status = *statuRep.DeepCopy()
@@ -60,43 +58,53 @@ func (r *MySQLRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// 	logger.Info("No change")
 	// 	return ctrl.Result{}, nil
 	// }
-	if len(statuRep.Conditions) == 0 {
-		meta.SetStatusCondition(&statuRep.Conditions, metav1.Condition{
+	if len(instance.Status.Conditions) == 0 {
+		meta.SetStatusCondition(&instance.Status.Conditions, metav1.Condition{
 			Type:               "unkonw",
 			Status:             metav1.ConditionUnknown,
 			Reason:             "initStatus",
 			Message:            "FirstSetStatus",
 			LastTransitionTime: metav1.NewTime(time.Now()),
 		})
+		instance.Status.LastStartTime = metav1.Time{Time: time.Unix(0, 0)}
+		instance.Status.LastSucceedTime = metav1.Time{Time: time.Unix(0, 0)}
+		instance.Status.LastFailedTime = metav1.Time{Time: time.Unix(0, 0)}
+		instance.Status.LastRestoreSpec = dbrestorev1alpha1.LastRestoreSpec{}
+		err := r.Status().Update(ctx, instance)
+		if err != nil {
+			logger.Info("[Init]StatusInitSucceed")
+			return ctrl.Result{Requeue: true}, nil
+		}
+		return ctrl.Result{}, err
 	}
 
 	// list allJobs owner by CR
 	var jobList batchv1.JobList
 	if err := r.List(ctx, &jobList, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
-		logger.Error(err, "ListJobListFailed")
+		logger.Error(err, "[List]Failed JobList")
 		return ctrl.Result{}, err
 	}
 
+	crRep := instance.DeepCopy()
 	// Create job if len(jobList) == 0
 	if len(jobList.Items) == 0 {
 		// Check Secrets aviliable
-		chkSecretsList := []string{specRep.DbSpec.DbAuth, specRep.S3Spec.S3Auth}
-		if specRep.ResotreModeSpec.ResotreMode == dbrestorev1alpha1.NewTargetMode {
-			chkSecretsList = append(chkSecretsList, specRep.ResotreModeSpec.NewTargetModeSpec.DbSpec.DbAuth)
+		chkSecretsList := []string{crRep.Spec.DbSpec.DbAuth, crRep.Spec.S3Spec.S3Auth}
+		if crRep.Spec.ResotreModeSpec.ResotreMode == dbrestorev1alpha1.NewTargetMode {
+			chkSecretsList = append(chkSecretsList, crRep.Spec.ResotreModeSpec.NewTargetModeSpec.DbSpec.DbAuth)
 		}
 		for _, v := range chkSecretsList {
 			if err := r.checkSecrets(instance, ctx, v); err != nil {
-				logger.Error(err, "Secrets check failed", "SecretsName", v)
-				meta.SetStatusCondition(&statuRep.Conditions, metav1.Condition{
+				logger.Error(err, "[Secrets] check failed", "SecretsName", v)
+				meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 					Type:    "Check",
 					Status:  metav1.ConditionTrue,
 					Reason:  "SecretsCheckFailed",
 					Message: fmt.Sprint("%V is unaviliale", v),
 				})
-				if !reflect.DeepEqual(statuRep, instance.Status) {
-					instance.Status = *statuRep.DeepCopy()
-					if err := r.Status().Update(ctx, instance); err != nil {
-						logger.Error(err, "Status update FAILED(phase: CheckSecets)")
+				if !reflect.DeepEqual(crRep.Status, instance.Status) {
+					if err := r.Status().Update(ctx, crRep); err != nil {
+						logger.Error(err, "[Status] update FAILED(phase: CheckSecets)")
 						return ctrl.Result{}, err
 					}
 				}
@@ -105,20 +113,18 @@ func (r *MySQLRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 
 		// checkJobTmp
-		jobName := instance.Name + "job"
-		jobTmp, err := r.BuildJobTmp(instance, jobName)
+		jobTmp, err := r.BuildJobTmp(crRep)
 		if err != nil {
-			logger.Error(err, "jobTmpBuildFailed", "JobTmpName", jobName)
-			meta.SetStatusCondition(&statuRep.Conditions, metav1.Condition{
+			logger.Error(err, "[jobTmpBuildFailed]")
+			meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 				Type:    "jobTmpBuild",
 				Status:  metav1.ConditionTrue,
 				Reason:  "jobTmpBuildFailed",
-				Message: fmt.Sprint("%V build is failed", jobName),
+				Message: "jobtemp build is failed",
 			})
-			if !reflect.DeepEqual(statuRep, instance.Status) {
-				instance.Status = *statuRep.DeepCopy()
+			if !reflect.DeepEqual(crRep.Status, instance.Status) {
 				if err := r.Status().Update(ctx, instance); err != nil {
-					logger.Error(err, "Status update FAILED(phase: CheckSecets)")
+					logger.Error(err, "[Status]update FAILED(phase: CheckSecets)")
 					return ctrl.Result{}, err
 				}
 			}
@@ -127,25 +133,23 @@ func (r *MySQLRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 		// buildJob from jobTmp
 		if err = r.Create(ctx, jobTmp); err != nil {
-			logger.Error(err, "jobCreateFailed", "jobName", jobName)
-			meta.SetStatusCondition(&statuRep.Conditions, metav1.Condition{
+			logger.Error(err, "[jobCreate]JobCreateFailed")
+			meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 				Type:    "jobCreate",
 				Status:  metav1.ConditionTrue,
 				Reason:  "jobCreateFailed",
-				Message: fmt.Sprint("%V create is failed", jobName),
+				Message: "job create is failed",
 			})
-			if !reflect.DeepEqual(statuRep, instance.Status) {
-				instance.Status = *statuRep.DeepCopy()
-				if err := r.Status().Update(ctx, instance); err != nil {
-					logger.Error(err, "Status update FAILED(phase: CheckSecets)")
+			if !reflect.DeepEqual(crRep.Status, instance.Status) {
+				if err := r.Status().Update(ctx, crRep); err != nil {
+					logger.Error(err, "[Status]update FAILED(phase: CheckSecets)")
 					return ctrl.Result{}, err
 				}
 			}
 			return ctrl.Result{}, err
-		} else {
-			logger.Info("jobCreateSucceed", "jobName", jobName)
-			return ctrl.Result{}, nil
 		}
+
+		return ctrl.Result{}, nil
 	}
 
 	// Sort JobList
@@ -153,43 +157,36 @@ func (r *MySQLRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return jobList.Items[i].CreationTimestamp.Before(&jobList.Items[j].CreationTimestamp)
 	})
 
-	// checkStatus allJobs owner by CR
-	lastStartTime := statuRep.LastStartTime
-	if lastStartTime == nil {
-		lastStartTime = &metav1.Time{}
-	}
-	lastSucceedTime := statuRep.LastSucceedTime
-	if lastSucceedTime == nil {
-		lastSucceedTime = &metav1.Time{}
-	}
-	lastFailedTime := statuRep.LastFailedTime
-	if lastFailedTime == nil {
-		lastFailedTime = &metav1.Time{}
-	}
 	for _, job := range jobList.Items {
 		_, jobFinStatus := IsJobFin(&job)
 		switch jobFinStatus {
 		case "":
 			{
-				// JobIsRunning
-				if lastStartTime.Before(&job.CreationTimestamp) {
-					logger.Info("Have new job ACTIVE", "jobName", job.Name)
-					meta.SetStatusCondition(&statuRep.Conditions, metav1.Condition{
+				if crRep.Status.LastStartTime.Before(&job.CreationTimestamp) {
+					logger.Info("Have new job ACTIVE", "jobName", job.CreationTimestamp, "LastStartTime", crRep.Status.LastStartTime)
+					meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 						Type:               "Running",
 						Status:             metav1.ConditionTrue,
 						Reason:             "JobRunning",
 						Message:            "JobRunning",
 						LastTransitionTime: metav1.NewTime(time.Now()),
 					})
-					statuRep.LastStartTime = &job.CreationTimestamp
+					crRep.Status.LastStartTime = job.CreationTimestamp
+					if !reflect.DeepEqual(crRep.Status, instance.Status) {
+						if err := r.Status().Update(ctx, crRep); err != nil {
+							logger.Error(err, "Status update FAILED(phase: finalUpdate)")
+							return ctrl.Result{}, err
+						}
+						return ctrl.Result{}, nil
+					}
 				}
 			}
 		case batchv1.JobComplete:
 			{
 				// JobIsCompleted
-				if lastSucceedTime.Before(job.Status.CompletionTime) {
+				if crRep.Status.LastSucceedTime.Before(job.Status.CompletionTime) {
 					logger.Info("Have new job COMPLETED", "jobName", job.Name)
-					meta.SetStatusCondition(&statuRep.Conditions, metav1.Condition{
+					meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 						Type:               "Completed",
 						Status:             metav1.ConditionTrue,
 						Reason:             "JobCompleted",
@@ -197,36 +194,43 @@ func (r *MySQLRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request
 						LastTransitionTime: metav1.NewTime(time.Now()),
 					})
 					lastBakSpec := dbrestorev1alpha1.LastRestoreSpec{
-						DbHost:         specRep.DbSpec.DbHost + ":" + specRep.DbSpec.DbPort,
-						DbName:         specRep.DbSpec.DbName,
-						RestoreVerison: &specRep.S3Spec.RestoreVid,
+						DbHost: crRep.Spec.DbSpec.DbHost + ":" + crRep.Spec.DbSpec.DbPort,
+						DbName: crRep.Spec.DbSpec.DbName,
 					}
-					statuRep.LastSucceedTime = job.Status.CompletionTime
-					statuRep.LastRestoreSpec = &lastBakSpec
+					crRep.Status.LastSucceedTime = *job.Status.CompletionTime
+					crRep.Status.LastRestoreSpec = lastBakSpec
+					if !reflect.DeepEqual(crRep.Status, instance.Status) {
+						if err := r.Status().Update(ctx, crRep); err != nil {
+							logger.Error(err, "Status update FAILED(phase: finalUpdate)")
+							return ctrl.Result{}, err
+						}
+						return ctrl.Result{}, nil
+					}
 				}
 			}
 		case batchv1.JobFailed:
 			{
 				// JobIsFialed
 				lastTransTime := job.Status.Conditions[len(job.Status.Conditions)-1].LastTransitionTime
-				if lastSucceedTime.Before(&lastTransTime) {
+				if crRep.Status.LastFailedTime.Before(&lastTransTime) {
 					logger.Info("Have new job FAILED", "jobName", job.Name)
-					meta.SetStatusCondition(&statuRep.Conditions, metav1.Condition{
+					meta.SetStatusCondition(&crRep.Status.Conditions, metav1.Condition{
 						Type:               "Failed",
 						Status:             metav1.ConditionTrue,
 						Reason:             "JobFailed",
 						Message:            "Job is Failed",
 						LastTransitionTime: metav1.NewTime(time.Now()),
 					})
-					statuRep.LastFailedTime = lastFailedTime
+					crRep.Status.LastFailedTime = lastTransTime
+				}
+				if !reflect.DeepEqual(crRep.Status, instance.Status) {
+					if err := r.Status().Update(ctx, crRep); err != nil {
+						logger.Error(err, "Status update FAILED(phase: finalUpdate)")
+						return ctrl.Result{}, err
+					}
+					return ctrl.Result{}, nil
 				}
 			}
-		}
-	}
-	if !reflect.DeepEqual(statuRep, instance.Status) {
-		instance.Status = *statuRep.DeepCopy()
-		if err := r.Status().Update(ctx, instance); err != nil {
-			logger.Error(err, "Status update FAILED(phase: finalUpdate)")
 		}
 	}
 	return ctrl.Result{}, nil

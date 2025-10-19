@@ -7,15 +7,15 @@ sourceSqlTest(){
 
     if [[ -z $user || -z $passwd || -z $rHost || -z $rPort || -z $rDBName ]]
     then
-        echo "Insufficient information provided" >&2
+        echo "Insufficient information provided"
         exit 1
     fi
     echo "try to access db"
 
-    mysql -u${user} -p${passwd} -h${rHost} -P${rPort} ${rDBName} -e 'select 1' 2> /dev/null
+    mysql -u${user} -p${passwd} -h${rHost} -P${rPort} ${rDBName} -e 'select 1'
     if [[ $? != 0 ]]
     then
-        echo "Dont access source db" >&2
+        echo "Dont access source db"
         exit 1
     fi
     echo "Source DB Access Success"
@@ -27,26 +27,26 @@ targetSqlTest(){
 
     if [[ -z $user || -z $passwd || -z $dHost || -z $dPort || -z $dDBName ]]
     then
-        echo "Insufficient information provided" >&2
+        echo "Insufficient information provided"
         exit 1
     fi
     echo "try to access db"
 
-    mysql -u${user} -p${passwd} -h${dHost} -P${dPort} ${dDBName} -e 'select 1' 2> /dev/null
+    mysql -u${user} -p${passwd} -h${dHost} -P${dPort} ${dDBName} -e 'select 1'
     if [[ $? != 0 ]]
     then
-        echo "Dont access target db" >&2
+        echo "Dont access target db"
         exit 1
     fi
     echo "Target DB Access Success"
 }
 
 s3Test(){
-    ac=$(cat /s3Auth/* | grep ac | awk -F " " '{print $2}')
-    sc=$(cat /s3Auth/* | grep sc | awk -F " " '{print $2}')
+    ac=$(cat /s3Auth/ac)
+    sc=$(cat /s3Auth/sc)
     if [[ -z $ac || -z $sc ]]
     then
-        echo "Insufficient information provided" >&2
+        echo "Insufficient information provided"
         exit 1
     fi
     echo "try to access S3"
@@ -56,30 +56,21 @@ s3Test(){
     mcli admin info myminio/ 2> /dev/null
     if [[ $? != 0 ]]
     then
-        echo "S3 connection failed" >&2
+        echo "S3 connection failed"
         exit 1
     fi
     echo "S3 Access Success"
 
     # 验证桶的存在
-    mcli ls myminio/${S3Bucket} 2> /dev/null
+    mcli ls myminio/${S3Path} 2> /dev/null
     if [[ $? != 0 ]]
     then
-        echo "S3 bucket not exist" >&2
+        echo "S3 bucket not exist"
         exit 1
     fi
     echo "S3 Bucket Exist"
 
     # 还需要验证版本的存在
-    if [[ ${S3Version} != "latest" ]]; then
-        echo "Manual set version detect"
-        mcli ls --versions myminio/sqldumerfile/mysql.zst | grep ${S3Version}
-        if [[ $? != 0 ]]; then
-            echo "Version unaviliable"
-            exit 1
-        fi
-    fi
-    echo "Use latest backup version"
     echo -e "Version Exist\nS3Check Succeed"
 }
 

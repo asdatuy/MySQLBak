@@ -14,14 +14,14 @@ sqlTest(){
     if [[ $? != 0 ]]
     then
         echo "Dont access db" >&2
-        exit 2
+        exit 1
     fi
     echo "DB Access Success"
 }
 
 s3Test(){
-    ac=$(cat /s3Auth/* | grep ac | awk -F " " '{print $2}')
-    sc=$(cat /s3Auth/* | grep sc | awk -F " " '{print $2}')
+    ac=$(cat /s3Auth/ac)
+    sc=$(cat /s3Auth/sc)
 
     # 验证连接
     mcli alias set myminio/ ${S3Endpoint} ${ac} ${sc}
@@ -29,7 +29,7 @@ s3Test(){
     if [[ $? != 0 ]]
     then
         echo "S3 connection failed" >&2
-        exit 3
+        exit 1
     fi
     echo "S3 Access Success"
 
@@ -48,10 +48,6 @@ case "${BakMode}" in
     "s3")
         echo "In s3 storage Mode"
         s3Test
-    ;;
-    "pv")
-        echo "In pv storage Mode"
-        # TODO: pv Create
     ;;
     *)
         echo "${BakMode} is empty or error("s3","pv",other), Now use emptyDir"

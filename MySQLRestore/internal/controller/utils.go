@@ -21,11 +21,11 @@ func IsJobFin(job *batchv1.Job) (bool, batchv1.JobConditionType) {
 	return false, ""
 }
 
-func (r *MySQLRestoreReconciler) BuildJobTmp(spec *dbrestorev1alpha1.MySQLRestore, jobName string) (*batchv1.Job, error) {
+func (r *MySQLRestoreReconciler) BuildJobTmp(spec *dbrestorev1alpha1.MySQLRestore) (*batchv1.Job, error) {
 	jobTmp := &batchv1.Job{
 		ObjectMeta: v1.ObjectMeta{
-			Name:      jobName,
-			Namespace: spec.Namespace,
+			GenerateName: spec.Name + "-job-",
+			Namespace:    spec.Namespace,
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: ptr.To(int32(2)),
@@ -128,16 +128,12 @@ func (r *MySQLRestoreReconciler) BuildJobTmp(spec *dbrestorev1alpha1.MySQLRestor
 	// S3Spec
 	s3Env := []corev1.EnvVar{
 		corev1.EnvVar{
+			Name:  "S3Path",
+			Value: spec.Spec.S3Spec.Path,
+		},
+		{
 			Name:  "S3Endpoint",
 			Value: spec.Spec.S3Spec.Endpoint,
-		},
-		{
-			Name:  "S3Bucket",
-			Value: spec.Spec.S3Spec.Bucket,
-		},
-		{
-			Name:  "S3Version",
-			Value: spec.Spec.S3Spec.RestoreVid,
 		},
 	}
 	addEnv(s3Env)

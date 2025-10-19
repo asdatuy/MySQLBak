@@ -90,19 +90,15 @@ spec:
                 type: object
               s3Spec:
                 properties:
-                  bucket:
-                    type: string
                   endpoint:
                     type: string
-                  restoreVid:
-                    default: latest
+                  path:
                     type: string
                   s3Auth:
                     type: string
                 required:
-                - bucket
                 - endpoint
-                - restoreVid
+                - path
                 - s3Auth
                 type: object
             required:
@@ -173,8 +169,6 @@ spec:
                   dbHost:
                     type: string
                   dbName:
-                    type: string
-                  restoreVersion:
                     type: string
                 required:
                 - dbHost
